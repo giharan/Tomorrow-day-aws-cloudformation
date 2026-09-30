@@ -1,0 +1,287 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation Template for Tomorrow Day Architecture - Student ID: IT22116710'
+
+Parameters:
+  StudentID:
+    Type: String
+    Default: it22116710
+    Description: Lowercase Student ID used for naming
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Master password for RDS Database. Provide securely when deploying the stack.
+
+Resources:
+  # ----------------------------------------------------
+  # 1. VPC & Networking Tier
+  # ----------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}-cf-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}-cf-igw'
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/20
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}-cf-subnet-public1'
+
+  # Private Subnets (Multi-AZ for RDS)
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.128.0/20
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}-cf-subnet-private1'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.144.0/20
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}-cf-subnet-private2'
+
+  # Route Table for Public Subnet
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}-cf-rtb-public'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  # ----------------------------------------------------
+  # 2. Security Groups Tier
+  # ----------------------------------------------------
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and SSH inbound traffic
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}_CF_Web_SG'
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL traffic strictly from Web SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref WebSecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}_CF_DB_SG'
+
+  # ----------------------------------------------------
+  # 3. Compute Tier (EC2 Instance)
+  # ----------------------------------------------------
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0c101f26f147fa7fd
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref WebSecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}_CF_WebServer'
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+
+          dnf update -y
+          dnf install -y httpd mariadb105
+
+          systemctl start httpd
+          systemctl enable httpd
+
+          cat <<EOF > /var/www/html/index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Tomorrow Day - ABC.com</title>
+
+              <style>
+                  body {
+                      font-family: Arial, sans-serif;
+                      text-align: center;
+                      margin-top: 50px;
+                      background-color: #f4f4f9;
+                  }
+
+                  .card {
+                      background: white;
+                      padding: 30px;
+                      border-radius: 10px;
+                      display: inline-block;
+                      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                  }
+
+                  h1 {
+                      color: #003366;
+                  }
+
+                  p {
+                      color: #555;
+                  }
+
+                  .status {
+                      color: #28a745;
+                      font-weight: bold;
+                  }
+              </style>
+          </head>
+
+          <body>
+              <div class="card">
+
+                  <h1>
+                      Tomorrow Day News - Asia Region
+                      (IaC CloudFormation)
+                  </h1>
+
+                  <p class="status">
+                      System Status: Operational via CloudFormation
+                  </p>
+
+                  <p>
+                      Student ID: <strong>${StudentID}</strong>
+                  </p>
+
+              </div>
+          </body>
+          </html>
+          EOF
+
+  # ----------------------------------------------------
+  # 4. Storage Tier (Amazon S3)
+  # ----------------------------------------------------
+  MediaS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${StudentID}-tomorrowday-iac-media'
+
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}_CF_S3_Bucket'
+
+  # ----------------------------------------------------
+  # 5. Database Tier (Amazon RDS Subnet Group & MySQL)
+  # ----------------------------------------------------
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS DB Tier
+
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}-cf-db-subnet-group'
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${StudentID}-cf-database'
+      Engine: mysql
+      EngineVersion: '8.0'
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+
+      MasterUsername: admin
+      MasterUserPassword: !Ref DBPassword
+
+      DBSubnetGroupName: !Ref DBSubnetGroup
+
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+
+      PubliclyAccessible: false
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${StudentID}_CF_Database'
+
+Outputs:
+  WebServerPublicIP:
+    Description: Public IP of the Web Server
+    Value: !GetAtt WebServerInstance.PublicIp
+
+  RDSEndpoint:
+    Description: RDS Endpoint address
+    Value: !GetAtt RDSInstance.Endpoint.Address
